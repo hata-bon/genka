@@ -1,0 +1,154 @@
+:root {
+  --brand: #5b2a5e;       /* ハスカップの紫 */
+  --brand-soft: #f3eaf4;
+  --bg: #f6f5f3;
+  --card: #ffffff;
+  --text: #222;
+  --muted: #777;
+  --line: #e4e1dc;
+  --good: #2e7d32;
+  --bad: #c62828;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---------- 上の見出し ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--brand); color: #fff;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.topbar h1 { font-size: 18px; margin: 0; flex: 1; }
+.back {
+  background: none; border: none; color: #fff;
+  font-size: 17px; padding: 4px 8px 4px 0;
+}
+
+main {
+  padding: 16px 16px calc(env(safe-area-inset-bottom) + 96px);
+  max-width: 640px; margin: 0 auto;
+}
+
+/* ---------- 下のタブ ---------- */
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: flex; background: #fff; border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabbar button {
+  flex: 1; background: none; border: none;
+  padding: 8px 0 10px; font-size: 22px; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.tabbar button span { font-size: 11px; }
+.tabbar button.active { color: var(--brand); }
+.tabbar button.active span { font-weight: 700; }
+
+/* ---------- 共通部品 ---------- */
+h2 { font-size: 15px; color: var(--muted); margin: 24px 4px 8px; font-weight: 600; }
+h2:first-child { margin-top: 0; }
+
+.card {
+  background: var(--card); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+button.card { display: block; width: 100%; text-align: left; border: none; font: inherit; color: inherit; }
+.card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.card .name { font-weight: 700; font-size: 17px; }
+.card .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.card .big { font-size: 20px; font-weight: 700; color: var(--brand); white-space: nowrap; }
+
+.badge {
+  display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px;
+  background: var(--brand-soft); color: var(--brand); margin-right: 6px; vertical-align: middle;
+}
+.badge.cafe { background: #e8f1e4; color: #3d6b2f; }
+
+.empty { text-align: center; color: var(--muted); padding: 24px 8px; line-height: 1.7; }
+
+.btn {
+  display: block; width: 100%; padding: 14px; border-radius: 12px;
+  border: none; font-size: 16px; font-weight: 700; margin-top: 10px;
+}
+.btn.primary { background: var(--brand); color: #fff; }
+.btn.ghost { background: #fff; color: var(--brand); border: 1.5px dashed var(--brand); }
+.btn.danger { background: none; color: var(--bad); font-weight: 400; }
+
+/* ---------- 入力フォーム ---------- */
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.field .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+input, select {
+  width: 100%; font-size: 16px; padding: 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: #fff; color: var(--text);
+  -webkit-appearance: none; appearance: none;
+}
+select {
+  background-image: linear-gradient(45deg, transparent 50%, #999 50%), linear-gradient(135deg, #999 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px; background-repeat: no-repeat; padding-right: 32px;
+}
+input:focus, select:focus { outline: 2px solid var(--brand); border-color: transparent; }
+
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline > * { flex: 1; }
+.inline .unit { flex: 0 0 auto; color: var(--muted); font-size: 14px; }
+
+.seg { display: flex; background: #eceae6; border-radius: 10px; padding: 3px; }
+.seg button {
+  flex: 1; border: none; background: none; padding: 9px 4px; border-radius: 8px;
+  font-size: 14px; color: var(--muted);
+}
+.seg button.on { background: #fff; color: var(--brand); font-weight: 700; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+
+.preview {
+  background: var(--brand-soft); color: var(--brand);
+  border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-top: 8px;
+}
+
+/* レシピの1行（材料・量・消すボタン） */
+.line-item { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.line-item select { flex: 1 1 55%; min-width: 0; }
+.line-item input { flex: 0 0 76px; text-align: right; padding: 12px 8px; }
+.line-item .unit { flex: 0 0 24px; font-size: 13px; color: var(--muted); }
+.line-item .x {
+  flex: 0 0 32px; height: 32px; border-radius: 50%; border: none;
+  background: #eee; color: #888; font-size: 16px;
+}
+.add-line {
+  background: none; border: none; color: var(--brand); font-size: 15px;
+  padding: 6px 0; font-weight: 600;
+}
+
+/* ---------- 原価の内訳 ---------- */
+.breakdown table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.breakdown td { padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.breakdown td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.breakdown .how { display: block; font-size: 12px; color: var(--muted); }
+.breakdown tr.total td { border-bottom: none; font-weight: 700; font-size: 18px; padding-top: 12px; }
+.breakdown tr.total td:last-child { color: var(--brand); font-size: 22px; }
+.result {
+  margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--brand-soft);
+}
+.result .row { display: flex; justify-content: space-between; padding: 3px 0; }
+.result .row b { font-size: 18px; }
+.plus { color: var(--good); }
+.minus { color: var(--bad); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 84px);
+  transform: translateX(-50%); background: rgba(30,30,30,.9); color: #fff;
+  padding: 10px 18px; border-radius: 99px; font-size: 14px; z-index: 20;
+}
