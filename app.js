@@ -186,6 +186,65 @@ function segHtml(name, options, value) {
 
 // ---------- 商品の一覧 ----------
 
+// 一覧の「切り替え」と「並べ替え」は、このスマホに覚えておく
+const UI_KEY = 'genka-ui';
+let ui = { filter: 'all', sort: 'order' };
+try { ui = { ...ui, ...JSON.parse(localStorage.getItem(UI_KEY)) }; } catch (e) { /* 覚えていなければ最初の状態 */ }
+function saveUi() {
+  try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch (e) { /* 覚えられなくても動く */ }
+}
+
+// 「農園」は農園の商品と加工品（たかさんのお財布）、「カフェ」はカフェのメニュー
+const FILTERS = { all: 'すべて', farm: '農園', cafe: 'カフェ' };
+const SORTS = { order: '登録順', profit: '利益が多い順', rate: '利益率が高い順' };
+
+function inFilter(p) {
+  if (ui.filter === 'farm') return p.group === 'farm' || p.group === 'processed';
+  if (ui.filter === 'cafe') return p.group === 'cafe';
+  return true;
+}
+
+// 売値から利益・利益率を出す（売値が未定なら null）
+function profitOf(p, c = calcCost(p)) {
+  const price = num(p.price);
+  if (price <= 0) return null;
+  const profit = price - c.total;
+  return { price, profit, rate: profit / price * 100 };
+}
+
+// 色分け：赤字は赤、目標の利益率より低いとオレンジ、目標以上は緑
+function profitClass(profit, rate) {
+  if (profit < 0) return 'minus';
+  return rate < num(data.settings.targetMargin) - 0.5 ? 'low' : 'plus';
+}
+
+// 目標の利益率（%）から売値の目安を出す。10円単位に切り上げ
+function priceForMargin(cost, marginPct) {
+  const m = marginPct / 100;
+  return m < 1 ? Math.ceil(cost / (1 - m) / 10) * 10 : 0;
+}
+
+function productCard(p, rank) {
+  const c = calcCost(p);
+  const r = profitOf(p, c);
+  const per = esc(p.unitLabel || '1つ');
+  const cls = r ? profitClass(r.profit, r.rate) : '';
+  return `
+    <button class="card" data-id="${p.id}">
+      <div class="row">
+        <div class="name">${rank ? `<span class="rank">${rank}</span>` : ''}${esc(p.name)}</div>
+        <div class="sub" style="margin:0">1${per}あたり</div>
+      </div>
+      <div class="stats">
+        <div><span>原価</span><b>${yen(c.total)}</b></div>
+        <div><span>売値</span><b>${r ? yen(r.price) : '未定'}</b></div>
+        <div><span>利益</span><b class="${r ? cls : ''}">${r ? yen(r.profit) : '—'}</b></div>
+        <div><span>利益率</span><b class="${r ? cls : ''}">${r ? r.rate.toFixed(0) + '%' : '—'}</b></div>
+      </div>
+      ${r ? '' : `<div class="sub">売値の目安 ${yen(c.suggested)}（利益率${num(data.settings.targetMargin)}%）</div>`}
+    </button>`;
+}
+
 function renderProducts() {
   setHeader('商品');
   if (data.products.length === 0) {
@@ -201,28 +260,141 @@ function renderProducts() {
     return;
   }
 
-  main.innerHTML = Object.entries(GROUPS).map(([g, label]) => {
-    const list = data.products.filter(p => p.group === g);
-    if (list.length === 0) return '';
-    return `<h2>${label}</h2>` + list.map(p => {
-      const c = calcCost(p);
-      const per = esc(p.unitLabel || '1つ');
-      return `
-        <button class="card" data-id="${p.id}">
-          <div class="row">
-            <div class="name">${esc(p.name)}</div>
-            <div class="big">${yen(c.total)}</div>
-          </div>
-          <div class="row sub">
-            <span>1${per}あたりの原価</span>
-            <span>売値の目安 ${yen(c.suggested)}</span>
-          </div>
-        </button>`;
+  const list = data.products.filter(inFilter);
+  let body;
+  if (list.length === 0) {
+    body = `<div class="empty">${FILTERS[ui.filter]}の商品はまだありません</div>`;
+  } else if (ui.sort === 'order') {
+    // 登録順のときは、グループごとに見出しをつける
+    body = Object.entries(GROUPS).map(([g, label]) => {
+      const items = list.filter(p => p.group === g);
+      return items.length ? `<h2>${label}</h2>` + items.map(p => productCard(p)).join('') : '';
     }).join('');
-  }).join('') + `<button class="btn ghost" id="add">＋ 商品を登録する</button>`;
+  } else {
+    // 利益の順に並べる。売値が未定の商品はいちばん下
+    const key = p => {
+      const r = profitOf(p);
+      if (!r) return -Infinity;
+      return ui.sort === 'profit' ? r.profit : r.rate;
+    };
+    const sorted = [...list].sort((a, b) => key(b) - key(a));
+    body = `<h2>${SORTS[ui.sort]}</h2>` +
+      sorted.map((p, i) => productCard(p, profitOf(p) ? i + 1 : '')).join('');
+  }
 
-  main.querySelectorAll('.card[data-id]').forEach(el => el.onclick = () => editProduct(el.dataset.id));
+  main.innerHTML = `
+    <div class="toolbar">
+      ${segHtml('filter', FILTERS, ui.filter)}
+      <select id="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${k === ui.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    </div>
+    ${body}
+    <button class="btn ghost" id="add">＋ 商品を登録する</button>`;
+
+  const seg = main.querySelector('.seg');
+  wireSeg(main);
+  seg.addEventListener('input', () => { ui.filter = seg.dataset.value; saveUi(); renderProducts(); });
+  main.querySelector('#sort').onchange = e => { ui.sort = e.target.value; saveUi(); renderProducts(); };
+  main.querySelectorAll('.card[data-id]').forEach(el => el.onclick = () => simulate(el.dataset.id));
   main.querySelector('#add').onclick = () => editProduct(null);
+}
+
+// ---------- 値段シミュレーション ----------
+
+function simulate(id) {
+  const p = data.products.find(x => x.id === id);
+  if (!p) { showTab('products'); return; }
+  const c = calcCost(p);
+  const per = esc(p.unitLabel || '1つ');
+  const target = num(data.settings.targetMargin);
+  const saved = num(p.price);
+
+  // スライダーの幅：原価から、目安の2倍くらいまで（決めた売値がそれより高ければそこまで）
+  const start = saved > 0 ? saved : c.suggested;
+  const min = Math.max(10, Math.floor(c.total / 10) * 10);
+  const max = Math.max(Math.ceil(c.suggested * 2 / 100) * 100, Math.ceil(start * 1.2 / 100) * 100, min + 100);
+
+  setHeader(p.name, () => showTab('products'));
+  window.scrollTo(0, 0);
+
+  const margins = [...new Set([30, 40, 50, target, 70])].filter(m => m < 100).sort((a, b) => a - b);
+
+  main.innerHTML = `
+    <div class="card">
+      <div class="row">
+        <div><div class="sub" style="margin:0">原価（1${per}あたり）</div><div class="big">${yen(c.total)}</div></div>
+        <button class="pill" id="edit">内訳・レシピを直す</button>
+      </div>
+      <div class="sub">いまの売値：${saved > 0 ? yen(saved) : 'まだ決めていません'}</div>
+    </div>
+
+    <h2>売値を動かしてみる</h2>
+    <div class="card sim">
+      <div class="inline price-in">
+        <input id="priceIn" type="number" inputmode="numeric" value="${start}">
+        <span class="unit">円（税込）</span>
+      </div>
+      <input id="slider" type="range" min="${min}" max="${max}" step="10" value="${Math.min(Math.max(start, min), max)}">
+      <div class="bar"><div class="cost"></div><div class="profit"></div></div>
+      <div class="bar-legend"><span>■ 原価</span><span class="plus">■ 利益</span></div>
+      <div class="sim-stats">
+        <div><span>1${per}あたりの利益</span><b id="sProfit"></b></div>
+        <div><span>利益率</span><b id="sRate"></b></div>
+      </div>
+      <div class="sub" id="sNote"></div>
+      <button class="btn primary" id="decide">この売値に決める</button>
+    </div>
+
+    <h2>利益率から売値を見る（早見表）</h2>
+    <div class="card quick">
+      <table>
+        <tr><th>利益率</th><th>売値の目安</th><th>利益</th></tr>
+        ${margins.map(m => {
+          const pr = priceForMargin(c.total, m);
+          return `<tr data-price="${pr}" class="${m === target ? 'target' : ''}">
+            <td>${m}%${m === target ? '<small>目標</small>' : ''}</td><td>${yen(pr)}</td><td>${yen(pr - c.total)}</td></tr>`;
+        }).join('')}
+      </table>
+      <div class="hint">行を押すと、上の売値がその値段になります</div>
+    </div>`;
+
+  const priceIn = main.querySelector('#priceIn');
+  const slider = main.querySelector('#slider');
+
+  const update = (price) => {
+    const profit = price - c.total;
+    const rate = price > 0 ? profit / price * 100 : 0;
+    const cls = profitClass(profit, rate);
+    main.querySelector('#sProfit').innerHTML = `<span class="${cls}">${yen(profit)}</span>`;
+    main.querySelector('#sRate').innerHTML = `<span class="${cls}">${rate.toFixed(1)}%</span>`;
+    const costPct = price > 0 ? Math.min(100, c.total / price * 100) : 100;
+    main.querySelector('.bar .cost').style.width = costPct + '%';
+    main.querySelector('.bar .profit').style.width = (100 - costPct) + '%';
+    const diff = rate - target;
+    main.querySelector('#sNote').textContent = profit < 0
+      ? 'この売値だと赤字です'
+      : Math.abs(diff) < 0.5 ? `目標の利益率（${target}%）ぴったりです`
+      : diff > 0 ? `目標の利益率（${target}%）より ${diff.toFixed(1)}ポイント高い`
+      : `目標の利益率（${target}%）より ${(-diff).toFixed(1)}ポイント低い`;
+    main.querySelectorAll('.quick tr[data-price]').forEach(tr => tr.classList.toggle('on', num(tr.dataset.price) === price));
+  };
+
+  slider.addEventListener('input', () => { priceIn.value = slider.value; update(num(slider.value)); });
+  priceIn.addEventListener('input', () => { slider.value = priceIn.value; update(num(priceIn.value)); });
+  main.querySelectorAll('.quick tr[data-price]').forEach(tr => tr.onclick = () => {
+    priceIn.value = tr.dataset.price; slider.value = tr.dataset.price; update(num(tr.dataset.price));
+    priceIn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  main.querySelector('#edit').onclick = () => editProduct(p.id);
+  main.querySelector('#decide').onclick = () => {
+    const price = num(priceIn.value);
+    if (price <= 0) { toast('売値を入れてください'); return; }
+    p.price = price;
+    save();
+    toast(`売値を${yen(price)}に決めました`);
+    simulate(p.id);
+  };
+
+  update(start);
 }
 
 // ---------- 商品（レシピ）の登録 ----------
@@ -235,7 +407,8 @@ function editProduct(id) {
     ingredients: [], packaging: [], amountsPerBatch: true,
   };
 
-  setHeader(existing ? '商品を直す' : '商品を登録', () => showTab('products'));
+  // 戻るときは、直す前に見ていた値段シミュレーションへ（新しく登録するときは一覧へ）
+  setHeader(existing ? '商品を直す' : '商品を登録', () => existing ? simulate(id) : showTab('products'));
   window.scrollTo(0, 0);
 
   const ingredientOptions = (sel) => `<option value="">材料をえらぶ</option>` +
@@ -378,7 +551,7 @@ function editProduct(id) {
     if (i >= 0) data.products[i] = cur; else data.products.push(cur);
     save();
     toast('保存しました');
-    showTab('products');
+    simulate(cur.id);
   });
 
   const del = form.querySelector('#del');

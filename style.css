@@ -146,9 +146,62 @@ input:focus, select:focus { outline: 2px solid var(--brand); border-color: trans
 .result .row b { font-size: 18px; }
 .plus { color: var(--good); }
 .minus { color: var(--bad); }
+.low { color: #e07b00; }   /* 黒字だけど目標の利益率より低い */
 
 .toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 84px);
   transform: translateX(-50%); background: rgba(30,30,30,.9); color: #fff;
   padding: 10px 18px; border-radius: 99px; font-size: 14px; z-index: 20;
 }
+
+/* ---------- 商品一覧（ステップ2） ---------- */
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+.toolbar .seg { flex: 1; }
+.toolbar select { flex: 0 0 auto; width: auto; font-size: 14px; padding: 9px 30px 9px 10px; }
+
+.stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  margin-top: 10px; text-align: center;
+}
+.stats div { background: var(--bg); border-radius: 8px; padding: 6px 2px; }
+.stats span { display: block; font-size: 11px; color: var(--muted); }
+.stats b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.rank {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; margin-right: 6px;
+  background: var(--brand); color: #fff; font-size: 12px; vertical-align: 2px;
+}
+
+/* ---------- 値段シミュレーション ---------- */
+.pill {
+  border: 1.5px solid var(--brand); background: #fff; color: var(--brand);
+  border-radius: 99px; padding: 7px 12px; font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.price-in input { font-size: 28px; font-weight: 700; text-align: right; color: var(--brand); }
+.sim input[type=range] {
+  width: 100%; margin: 18px 0 14px; padding: 0; border: none; background: none;
+  -webkit-appearance: none; appearance: none; height: 28px;
+}
+.sim input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; background: #e0d4e1; }
+.sim input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 28px; height: 28px; border-radius: 50%; margin-top: -10px;
+  background: var(--brand); border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+.sim input[type=range]:focus { outline: none; }
+.bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: #eee; }
+.bar .cost { background: #b9a3bb; transition: width .15s; }
+.bar .profit { background: var(--good); transition: width .15s; }
+.bar-legend { display: flex; gap: 14px; font-size: 12px; color: #9b829d; margin-top: 4px; }
+.sim-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.sim-stats div { background: var(--bg); border-radius: 10px; padding: 10px; text-align: center; }
+.sim-stats > div > span { display: block; font-size: 12px; color: var(--muted); }
+.sim-stats b { font-size: 22px; font-variant-numeric: tabular-nums; }
+#sNote { text-align: center; margin-top: 10px; }
+
+.quick table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.quick th { font-size: 12px; color: var(--muted); font-weight: 400; text-align: right; padding: 4px 6px; }
+.quick th:first-child, .quick td:first-child { text-align: left; }
+.quick td { padding: 11px 6px; border-top: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.quick td small { margin-left: 6px; font-size: 11px; color: var(--brand); background: var(--brand-soft); padding: 1px 6px; border-radius: 99px; }
+.quick tr.target td { font-weight: 700; }
+.quick tr.on td { background: var(--brand-soft); }
