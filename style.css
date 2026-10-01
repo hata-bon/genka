@@ -205,3 +205,14 @@ input:focus, select:focus { outline: 2px solid var(--brand); border-color: trans
 .quick td small { margin-left: 6px; font-size: 11px; color: var(--brand); background: var(--brand-soft); padding: 1px 6px; border-radius: 99px; }
 .quick tr.target td { font-weight: 700; }
 .quick tr.on td { background: var(--brand-soft); }
+
+/* ---------- 卸値の連動（ステップ3） ---------- */
+.linked-menus { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.menu-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%;
+  background: var(--bg); border: none; border-radius: 10px; padding: 11px 12px; margin-top: 8px;
+  font: inherit; font-size: 14px; color: inherit; text-align: left;
+}
+.menu-row span:first-child { font-weight: 600; }
+.menu-row span:last-child { color: var(--muted); font-size: 13px; }
+.menu-row b:not([class]) { color: var(--text); }

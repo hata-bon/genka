@@ -55,6 +55,7 @@ function migrateToBatchAmounts(d) {
 }
 
 function save() {
+  syncLinkedMaterials();
   localStorage.setItem(STORE_KEY, JSON.stringify(data));
 }
 
@@ -87,15 +88,71 @@ function baseUnit(material) {
   return (UNITS[material.unit] || UNITS['個']).base;
 }
 
+// 材料の仕入れ値。農園の卸値と連動している材料は、その卸値をそのまま使う
+function materialPrice(material) {
+  if (material.linkedProductId) {
+    const p = data.products.find(x => x.id === material.linkedProductId);
+    if (p && p.wholesale) return wholesalePrice(p);
+  }
+  return num(material.price);
+}
+
 // 材料の「1g（1ml・1個）あたり」の値段
 function unitPrice(material) {
   const u = UNITS[material.unit] || UNITS['個'];
   const amount = num(material.qty) * u.factor;
-  return amount > 0 ? num(material.price) / amount : 0;
+  return amount > 0 ? materialPrice(material) / amount : 0;
+}
+
+// 商品の単位（kg・本・パックなど）から、材料としての仕入れの単位を決める
+function unitFromLabel(label) {
+  return UNITS[label] ? label : '個';
+}
+
+// カフェへの卸値。自分で決めた値段がなければ「原価＋上乗せ率」を10円単位に切り上げ
+function wholesalePrice(p) {
+  if (num(p.wholesalePrice) > 0) return num(p.wholesalePrice);
+  return autoWholesale(p);
+}
+function autoWholesale(p) {
+  return Math.ceil(calcCost(p).total * (1 + num(data.settings.wholesaleMarkup) / 100) / 10) * 10;
+}
+
+// 「カフェへ卸す」商品ごとに、カフェ用の材料を用意する（卸すのをやめたら、最後の値段で連動を外す）
+function syncLinkedMaterials() {
+  for (const p of data.products) {
+    if (!p.wholesale || p.group === 'cafe') continue;
+    let m = data.materials.find(x => x.linkedProductId === p.id);
+    if (!m) {
+      m = { id: newId(), linkedProductId: p.id, use: 'cafe', supplier: '自家農園' };
+      data.materials.push(m);
+    }
+    const price = wholesalePrice(p);
+    if (m.price !== price) m.updatedAt = today();
+    Object.assign(m, { name: `${p.name}（農園から）`, qty: 1, unit: unitFromLabel(p.unitLabel), price });
+  }
+  for (const m of data.materials) {
+    if (!m.linkedProductId) continue;
+    const p = data.products.find(x => x.id === m.linkedProductId);
+    if (!p || !p.wholesale || p.group === 'cafe') delete m.linkedProductId;
+  }
+}
+
+// この材料（農園から）を使っているカフェのメニュー
+function menusUsing(materialId) {
+  return data.products.filter(p => (p.ingredients || []).some(l => l.materialId === materialId));
 }
 
 // 商品1つあたりの原価の内訳
+const calculating = new Set();  // 同じ商品を計算中にまた計算しないための印
+
 function calcCost(product) {
+  if (calculating.has(product.id)) return { ingredients: 0, ingredientsBatch: 0, packaging: 0, labor: 0, utility: 0, total: 0, suggested: 0, batch: 0 };
+  calculating.add(product.id);
+  try { return calcCostInner(product); } finally { calculating.delete(product.id); }
+}
+
+function calcCostInner(product) {
   const s = data.settings;
   const batch = num(product.batchCount);
 
@@ -103,7 +160,7 @@ function calcCost(product) {
   let ingredientsBatch = 0;
   for (const line of product.ingredients || []) {
     const m = data.materials.find(x => x.id === line.materialId);
-    if (m && num(m.qty) > 0) ingredientsBatch += num(m.price) / num(m.qty) * num(line.amount);
+    if (m && num(m.qty) > 0) ingredientsBatch += materialPrice(m) / num(m.qty) * num(line.amount);
   }
   const ingredients = batch > 0 ? ingredientsBatch / batch : 0;
 
@@ -142,9 +199,13 @@ function setHeader(title, onBack) {
   backBtn.onclick = onBack || null;
 }
 
-function showTab(tab) {
+function markTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+}
+
+function showTab(tab) {
+  markTab(tab);
   window.scrollTo(0, 0);
   if (tab === 'products') renderProducts();
   if (tab === 'materials') renderMaterials();
@@ -288,8 +349,11 @@ function renderProducts() {
       <select id="sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${k === ui.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>
     </div>
     ${body}
-    <button class="btn ghost" id="add">＋ 商品を登録する</button>`;
+    <button class="btn ghost" id="add">＋ 商品を登録する</button>
+    ${data.products.some(p => p.group === 'farm') ? '' : `<button class="btn ghost" id="sample2">見本の「加工用ハスカップ」と「パフェ」を入れる</button>`}`;
 
+  const sample2 = main.querySelector('#sample2');
+  if (sample2) sample2.onclick = addFarmCafeSample;
   const seg = main.querySelector('.seg');
   wireSeg(main);
   seg.addEventListener('input', () => { ui.filter = seg.dataset.value; saveUi(); renderProducts(); });
@@ -299,6 +363,35 @@ function renderProducts() {
 }
 
 // ---------- 値段シミュレーション ----------
+
+// 農園→カフェの卸値と、その卸値を使っているカフェのメニュー
+function wholesaleCardHtml(p, c) {
+  if (!p.wholesale || p.group === 'cafe') return '';
+  const per = esc(p.unitLabel || '1つ');
+  const ws = wholesalePrice(p);
+  const manual = num(p.wholesalePrice) > 0;
+  const linked = data.materials.find(m => m.linkedProductId === p.id);
+  const menus = linked ? menusUsing(linked.id) : [];
+  return `
+    <h2>カフェへの卸値</h2>
+    <div class="card">
+      <div class="row">
+        <div><div class="sub" style="margin:0">1${per}あたり</div><div class="big">${yen(ws)}</div></div>
+        <div class="sub" style="text-align:right">${manual ? '自分で決めた卸値' : `原価${yen(c.total)}＋${num(data.settings.wholesaleMarkup)}%`}<br>農園の利益 ${yen(ws - c.total)}</div>
+      </div>
+      <div class="linked-menus">
+        <div class="sub">この卸値を使っているカフェのメニュー</div>
+        ${menus.length ? menus.map(m => {
+          const mc = calcCost(m);
+          const r = profitOf(m, mc);
+          return `<button class="menu-row" data-id="${m.id}">
+            <span>${esc(m.name)}</span>
+            <span>原価 <b>${yen(mc.total)}</b>${r ? ` ・ 利益率 <b class="${profitClass(r.profit, r.rate)}">${r.rate.toFixed(0)}%</b>` : ''}</span>
+          </button>`;
+        }).join('') : `<div class="sub">まだありません。カフェのメニューの材料で「${esc(p.name)}（農園から）」をえらぶと、ここに出ます</div>`}
+      </div>
+    </div>`;
+}
 
 function simulate(id) {
   const p = data.products.find(x => x.id === id);
@@ -314,6 +407,7 @@ function simulate(id) {
   const max = Math.max(Math.ceil(c.suggested * 2 / 100) * 100, Math.ceil(start * 1.2 / 100) * 100, min + 100);
 
   setHeader(p.name, () => showTab('products'));
+  markTab('products');
   window.scrollTo(0, 0);
 
   const margins = [...new Set([30, 40, 50, target, 70])].filter(m => m < 100).sort((a, b) => a - b);
@@ -326,6 +420,7 @@ function simulate(id) {
       </div>
       <div class="sub">いまの売値：${saved > 0 ? yen(saved) : 'まだ決めていません'}</div>
     </div>
+    ${wholesaleCardHtml(p, c)}
 
     <h2>売値を動かしてみる</h2>
     <div class="card sim">
@@ -385,6 +480,7 @@ function simulate(id) {
     priceIn.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
   main.querySelector('#edit').onclick = () => editProduct(p.id);
+  main.querySelectorAll('.menu-row').forEach(el => el.onclick = () => simulate(el.dataset.id));
   main.querySelector('#decide').onclick = () => {
     const price = num(priceIn.value);
     if (price <= 0) { toast('売値を入れてください'); return; }
@@ -399,20 +495,39 @@ function simulate(id) {
 
 // ---------- 商品（レシピ）の登録 ----------
 
+// 農園の商品は「1年間の栽培にかかった費用 ÷ 1年間の収穫量」で出すので、項目の名前を変える
+const LABELS = {
+  normal: {
+    section: '1回の仕込み', batch: '1回でできる数', batchHint: 'だいたいの数でOKです（例：約50瓶 → 50）',
+    labor: '作業時間（1回あたり）', utility: '光熱費・機械代（1回あたりの目安）',
+    ings: '使う材料（1回の仕込みで使う量）', per: '1回分', ingName: '材料費', utilName: '光熱費・機械代',
+  },
+  farm: {
+    section: '1年間の栽培', batch: '1年間の収穫量', batchHint: 'データが少ないうちは仮の数字でOKです（例：300kg → 300）',
+    labor: '1年間の作業時間', utility: '機械の燃料など（1年間）',
+    ings: '使った肥料・農薬・資材（1年間の量）', per: '1年分', ingName: '肥料・農薬・資材', utilName: '燃料など',
+  },
+};
+function labelsFor(group) { return group === 'farm' ? LABELS.farm : LABELS.normal; }
+
 function editProduct(id) {
   const existing = data.products.find(p => p.id === id);
   const p = existing ? structuredClone(existing) : {
     id: newId(), name: '', group: 'processed', unitLabel: '瓶',
     batchCount: '', laborHours: '', utilityPerBatch: '', price: '',
     ingredients: [], packaging: [], amountsPerBatch: true,
+    wholesale: false, wholesalePrice: '',
   };
+  const L = labelsFor(p.group);
 
   // 戻るときは、直す前に見ていた値段シミュレーションへ（新しく登録するときは一覧へ）
   setHeader(existing ? '商品を直す' : '商品を登録', () => existing ? simulate(id) : showTab('products'));
+  markTab('products');
   window.scrollTo(0, 0);
 
   const ingredientOptions = (sel) => `<option value="">材料をえらぶ</option>` +
-    data.materials.map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+    data.materials.filter(m => m.linkedProductId !== p.id)
+      .map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
   const packagingOptions = (sel) => `<option value="">包装をえらぶ</option>` +
     data.packaging.map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
 
@@ -450,24 +565,24 @@ function editProduct(id) {
         </div>
       </div>
 
-      <h2>1回の仕込み</h2>
+      <h2 data-l="section">${L.section}</h2>
       <div class="card">
         <div class="field">
-          <label>1回でできる数</label>
+          <label data-l="batch">${L.batch}</label>
           <div class="inline"><input name="batchCount" type="number" inputmode="decimal" value="${esc(p.batchCount)}" placeholder="50"><span class="unit unitLabel">${esc(p.unitLabel)}</span></div>
-          <div class="hint">だいたいの数でOKです（例：約50瓶 → 50）</div>
+          <div class="hint" data-l="batchHint">${L.batchHint}</div>
         </div>
         <div class="field">
-          <label>作業時間（1回あたり）</label>
+          <label data-l="labor">${L.labor}</label>
           <div class="inline"><input name="laborHours" type="number" inputmode="decimal" step="0.25" value="${esc(p.laborHours)}" placeholder="3"><span class="unit">時間</span></div>
         </div>
         <div class="field">
-          <label>光熱費・機械代（1回あたりの目安）</label>
+          <label data-l="utility">${L.utility}</label>
           <div class="inline"><input name="utilityPerBatch" type="number" inputmode="decimal" value="${esc(p.utilityPerBatch)}" placeholder="600"><span class="unit">円</span></div>
         </div>
       </div>
 
-      <h2>使う材料（1回の仕込みで使う量）</h2>
+      <h2 data-l="ings">${L.ings}</h2>
       <div class="card">
         <div id="ings">${p.ingredients.map(ingLine).join('')}</div>
         ${data.materials.length
@@ -486,6 +601,18 @@ function editProduct(id) {
       <h2>売値（決まっていれば）</h2>
       <div class="card">
         <div class="inline"><input name="price" type="number" inputmode="decimal" value="${esc(p.price)}" placeholder="未定なら空のまま"><span class="unit">円（税込）</span></div>
+      </div>
+
+      <div id="wsBlock">
+        <h2>カフェへ卸す</h2>
+        <div class="card">
+          ${segHtml('wholesale', { no: '卸さない', yes: '卸す' }, p.wholesale ? 'yes' : 'no')}
+          <div id="wsFields" class="field" style="margin:14px 0 0">
+            <label>卸値（1<span class="unitLabel">${esc(p.unitLabel)}</span>あたり・税込）</label>
+            <div class="inline"><input name="wholesalePrice" type="number" inputmode="decimal" value="${esc(p.wholesalePrice)}" placeholder="自動"><span class="unit">円</span></div>
+            <div class="hint" id="wsHint"></div>
+          </div>
+        </div>
       </div>
 
       <h2>原価の内訳</h2>
@@ -509,6 +636,8 @@ function editProduct(id) {
       laborHours: f.laborHours.value,
       utilityPerBatch: f.utilityPerBatch.value,
       price: f.price.value,
+      wholesale: form.querySelector('.seg[data-name=wholesale]').dataset.value === 'yes',
+      wholesalePrice: f.wholesalePrice.value,
       ingredients: [...form.querySelectorAll('.ing')].map(row => ({
         materialId: row.querySelector('select').value,
         amount: row.querySelector('input').value,
@@ -524,6 +653,14 @@ function editProduct(id) {
     const cur = readForm();
     const per = cur.unitLabel || '1つ';
     form.querySelectorAll('.unitLabel').forEach(el => el.textContent = per);
+    // グループに合わせて項目の名前を変える
+    const L = labelsFor(cur.group);
+    form.querySelectorAll('[data-l]').forEach(el => el.textContent = L[el.dataset.l]);
+    // カフェへ卸すのは農園・加工品だけ
+    form.querySelector('#wsBlock').hidden = cur.group === 'cafe';
+    form.querySelector('#wsFields').hidden = !cur.wholesale;
+    form.querySelector('#wsHint').textContent =
+      `空のままなら、原価＋${num(data.settings.wholesaleMarkup)}%で自動計算します（いまは${yen(autoWholesale(cur))}）`;
     // 材料をえらび直したら、量の単位（g・ml・個）も合わせる
     form.querySelectorAll('.ing').forEach(row => {
       const m = data.materials.find(x => x.id === row.querySelector('select').value);
@@ -556,8 +693,12 @@ function editProduct(id) {
 
   const del = form.querySelector('#del');
   if (del) del.onclick = () => {
+    const linked = data.materials.find(m => m.linkedProductId === p.id);
+    const users = linked ? menusUsing(linked.id).map(x => x.name) : [];
+    if (users.length) { alert(`カフェの「${users.join('」「')}」でこの商品の卸値を使っているので消せません。先にメニューから外してください。`); return; }
     if (!confirm(`「${p.name}」を消しますか？`)) return;
     data.products = data.products.filter(x => x.id !== p.id);
+    if (linked) data.materials = data.materials.filter(m => m !== linked);
     save();
     toast('消しました');
     showTab('products');
@@ -570,15 +711,17 @@ function breakdownHtml(p) {
   const c = calcCost(p);
   const s = data.settings;
   const per = esc(p.unitLabel || '1つ');
+  const L = labelsFor(p.group);
   const batch = c.batch > 0 ? `${c.batch}${per}` : '（できる数が未入力）';
 
   let html = `<table>
-    <tr><td>材料費<span class="how">1回分 ${yen(c.ingredientsBatch)} ÷ ${batch}</span></td><td>${yen(c.ingredients)}</td></tr>
+    <tr><td>${L.ingName}<span class="how">${L.per} ${yen(c.ingredientsBatch)} ÷ ${batch}</span></td><td>${yen(c.ingredients)}</td></tr>
     <tr><td>包装・送料</td><td>${yen(c.packaging)}</td></tr>
     <tr><td>作業時間<span class="how">${num(p.laborHours)}時間 × 時給${yen(s.hourlyWage)} ÷ ${batch}</span></td><td>${yen(c.labor)}</td></tr>
-    <tr><td>光熱費・機械代<span class="how">${yen(num(p.utilityPerBatch))} ÷ ${batch}</span></td><td>${yen(c.utility)}</td></tr>
+    <tr><td>${L.utilName}<span class="how">${yen(num(p.utilityPerBatch))} ÷ ${batch}</span></td><td>${yen(c.utility)}</td></tr>
     <tr class="total"><td>原価（1${per}あたり）</td><td>${yen(c.total)}</td></tr>
   </table>
+  ${p.wholesale && p.group !== 'cafe' ? `<div class="result"><div class="row"><span>カフェへの卸値</span><b>${yen(wholesalePrice(p))}</b></div></div>` : ''}
   <div class="result">
     <div class="row"><span>売値の目安（利益率${num(s.targetMargin)}%）</span><b>${yen(c.suggested)}</b></div>`;
 
@@ -606,7 +749,9 @@ function renderMaterials() {
         <div class="name"><span class="badge ${m.use === 'cafe' ? 'cafe' : ''}">${m.use === 'cafe' ? 'カフェ' : '農園'}</span>${esc(m.name)}</div>
         <div class="big">${yenFine(unitPrice(m))}<small style="font-size:12px;color:var(--muted);font-weight:400"> /${baseUnit(m)}</small></div>
       </div>
-      <div class="sub">仕入れ：${num(m.qty)}${esc(m.unit)} ${yen(num(m.price))}${m.supplier ? '・' + esc(m.supplier) : ''}・${esc(m.updatedAt)}更新</div>
+      <div class="sub">${m.linkedProductId
+        ? `🔗 農園の卸値と連動：1${esc(m.unit === '個' ? (data.products.find(x => x.id === m.linkedProductId)?.unitLabel || '個') : m.unit)} ${yen(materialPrice(m))}`
+        : `仕入れ：${num(m.qty)}${esc(m.unit)} ${yen(num(m.price))}${m.supplier ? '・' + esc(m.supplier) : ''}・${esc(m.updatedAt)}更新`}</div>
     </button>`).join('');
 
   const pkgs = data.packaging.map(x => `
@@ -638,6 +783,19 @@ function usedBy(field, id) {
 
 function editMaterial(id) {
   const existing = data.materials.find(m => m.id === id);
+  if (existing && existing.linkedProductId) {
+    const p = data.products.find(x => x.id === existing.linkedProductId);
+    setHeader(existing.name, () => showTab('materials'));
+    main.innerHTML = `
+      <div class="card">
+        <div class="name">🔗 ${esc(existing.name)}</div>
+        <p class="sub" style="line-height:1.7">この材料の値段は、農園の「${esc(p.name)}」のカフェへの卸値（${yen(materialPrice(existing))}）と連動しています。
+        卸値を変えると、この材料を使うカフェのメニューの原価も自動で変わります。</p>
+        <button class="btn primary" id="go">農園の「${esc(p.name)}」を開く</button>
+      </div>`;
+    main.querySelector('#go').onclick = () => simulate(p.id);
+    return;
+  }
   const m = existing ? { ...existing } : { id: newId(), name: '', use: 'farm', qty: 1, unit: 'kg', price: '', supplier: '' };
 
   setHeader(existing ? '材料を直す' : '材料を追加', () => showTab('materials'));
@@ -823,6 +981,40 @@ function addSample() {
     ingredients: [{ materialId: haskap, amount: 4.5 }, { materialId: sugar, amount: 2.25 }],
     amountsPerBatch: true,
     packaging: [{ packagingId: jar, count: 1 }, { packagingId: label, count: 1 }],
+  });
+  save();
+  toast('見本を入れました（数字は仮です）');
+  renderProducts();
+}
+
+// 見本：農園の果実（1年間の費用 ÷ 収穫量）→ カフェへ卸す → カフェのメニュー（数字はすべて仮）
+function addFarmCafeSample() {
+  const mat = (name, obj) => {
+    const found = data.materials.find(x => x.name === name && !x.linkedProductId);
+    if (found) return found.id;
+    const item = { id: newId(), name, supplier: '', updatedAt: today(), ...obj };
+    data.materials.push(item);
+    return item.id;
+  };
+  const fert = mat('肥料', { use: 'farm', qty: 20, unit: 'kg', price: 3000 });
+  const spray = mat('農薬', { use: 'farm', qty: 1, unit: 'L', price: 4000 });
+  const milk = mat('牛乳', { use: 'cafe', qty: 1, unit: 'L', price: 250 });
+
+  const fruit = {
+    id: newId(), name: '加工用ハスカップ', group: 'farm', unitLabel: 'kg',
+    batchCount: 300, laborHours: 120, utilityPerBatch: 30000, price: '',
+    ingredients: [{ materialId: fert, amount: 200 }, { materialId: spray, amount: 5 }],
+    packaging: [], amountsPerBatch: true, wholesale: true, wholesalePrice: '',
+  };
+  data.products.push(fruit);
+  save();  // ここでカフェ用の「加工用ハスカップ（農園から）」ができる
+  const linked = data.materials.find(m => m.linkedProductId === fruit.id);
+
+  data.products.push({
+    id: newId(), name: 'ハスカップパフェ', group: 'cafe', unitLabel: '皿',
+    batchCount: 1, laborHours: 0.25, utilityPerBatch: 30, price: 900,
+    ingredients: [{ materialId: linked.id, amount: 0.08 }, { materialId: milk, amount: 0.1 }],
+    packaging: [], amountsPerBatch: true,
   });
   save();
   toast('見本を入れました（数字は仮です）');
