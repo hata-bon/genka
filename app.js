@@ -33,10 +33,25 @@ function load() {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY));
     if (saved) {
       saved.settings = { ...DEFAULT_SETTINGS, ...saved.settings };
+      migrateToBatchAmounts(saved);
       return saved;
     }
   } catch (e) { /* 読めなければ空から始める */ }
   return { settings: { ...DEFAULT_SETTINGS }, materials: [], packaging: [], products: [] };
+}
+
+// 以前の「1つあたりの量（g・ml・個）」を「1回の仕込みで使う量（仕入れと同じ単位）」に置きかえる
+function migrateToBatchAmounts(d) {
+  for (const p of d.products) {
+    if (p.amountsPerBatch) continue;
+    for (const line of p.ingredients || []) {
+      const m = d.materials.find(x => x.id === line.materialId);
+      const factor = (UNITS[m?.unit] || UNITS['個']).factor;
+      const perBatch = num(line.amount) * num(p.batchCount) / factor;
+      line.amount = Math.round(perBatch * 1000) / 1000;
+    }
+    p.amountsPerBatch = true;
+  }
 }
 
 function save() {
@@ -84,11 +99,13 @@ function calcCost(product) {
   const s = data.settings;
   const batch = num(product.batchCount);
 
-  let ingredients = 0;
+  // 材料は「1回の仕込みで使う量（仕入れと同じ単位）」で入っているので、1回分の材料費をできた数で割る
+  let ingredientsBatch = 0;
   for (const line of product.ingredients || []) {
     const m = data.materials.find(x => x.id === line.materialId);
-    if (m) ingredients += unitPrice(m) * num(line.amount);
+    if (m && num(m.qty) > 0) ingredientsBatch += num(m.price) / num(m.qty) * num(line.amount);
   }
+  const ingredients = batch > 0 ? ingredientsBatch / batch : 0;
 
   let packaging = 0;
   for (const line of product.packaging || []) {
@@ -104,7 +121,7 @@ function calcCost(product) {
   const margin = num(s.targetMargin) / 100;
   const suggested = margin < 1 ? Math.ceil(total / (1 - margin) / 10) * 10 : 0;
 
-  return { ingredients, packaging, labor, utility, total, suggested, batch };
+  return { ingredients, ingredientsBatch, packaging, labor, utility, total, suggested, batch };
 }
 
 // ---------- 画面の切り替え ----------
@@ -215,7 +232,7 @@ function editProduct(id) {
   const p = existing ? structuredClone(existing) : {
     id: newId(), name: '', group: 'processed', unitLabel: '瓶',
     batchCount: '', laborHours: '', utilityPerBatch: '', price: '',
-    ingredients: [], packaging: [],
+    ingredients: [], packaging: [], amountsPerBatch: true,
   };
 
   setHeader(existing ? '商品を直す' : '商品を登録', () => showTab('products'));
@@ -231,7 +248,7 @@ function editProduct(id) {
     return `<div class="line-item ing">
       <select>${ingredientOptions(l.materialId)}</select>
       <input type="number" inputmode="decimal" placeholder="量" value="${esc(l.amount ?? '')}">
-      <span class="unit">${m ? baseUnit(m) : ''}</span>
+      <span class="unit">${m ? esc(m.unit) : ''}</span>
       <button type="button" class="x" aria-label="消す">×</button>
     </div>`;
   };
@@ -264,7 +281,8 @@ function editProduct(id) {
       <div class="card">
         <div class="field">
           <label>1回でできる数</label>
-          <div class="inline"><input name="batchCount" type="number" inputmode="decimal" value="${esc(p.batchCount)}" placeholder="30"><span class="unit unitLabel">${esc(p.unitLabel)}</span></div>
+          <div class="inline"><input name="batchCount" type="number" inputmode="decimal" value="${esc(p.batchCount)}" placeholder="50"><span class="unit unitLabel">${esc(p.unitLabel)}</span></div>
+          <div class="hint">だいたいの数でOKです（例：約50瓶 → 50）</div>
         </div>
         <div class="field">
           <label>作業時間（1回あたり）</label>
@@ -276,7 +294,7 @@ function editProduct(id) {
         </div>
       </div>
 
-      <h2>使う材料（1<span class="unitLabel">${esc(p.unitLabel)}</span>あたりの量）</h2>
+      <h2>使う材料（1回の仕込みで使う量）</h2>
       <div class="card">
         <div id="ings">${p.ingredients.map(ingLine).join('')}</div>
         ${data.materials.length
@@ -336,7 +354,7 @@ function editProduct(id) {
     // 材料をえらび直したら、量の単位（g・ml・個）も合わせる
     form.querySelectorAll('.ing').forEach(row => {
       const m = data.materials.find(x => x.id === row.querySelector('select').value);
-      row.querySelector('.unit').textContent = m ? baseUnit(m) : '';
+      row.querySelector('.unit').textContent = m ? m.unit : '';
     });
     form.querySelector('#breakdown').innerHTML = breakdownHtml(cur);
   };
@@ -382,7 +400,7 @@ function breakdownHtml(p) {
   const batch = c.batch > 0 ? `${c.batch}${per}` : '（できる数が未入力）';
 
   let html = `<table>
-    <tr><td>材料費</td><td>${yen(c.ingredients)}</td></tr>
+    <tr><td>材料費<span class="how">1回分 ${yen(c.ingredientsBatch)} ÷ ${batch}</span></td><td>${yen(c.ingredients)}</td></tr>
     <tr><td>包装・送料</td><td>${yen(c.packaging)}</td></tr>
     <tr><td>作業時間<span class="how">${num(p.laborHours)}時間 × 時給${yen(s.hourlyWage)} ÷ ${batch}</span></td><td>${yen(c.labor)}</td></tr>
     <tr><td>光熱費・機械代<span class="how">${yen(num(p.utilityPerBatch))} ÷ ${batch}</span></td><td>${yen(c.utility)}</td></tr>
@@ -629,7 +647,8 @@ function addSample() {
   data.products.push({
     id: newId(), name: 'ハスカップジャム', group: 'processed', unitLabel: '瓶',
     batchCount: 30, laborHours: 3, utilityPerBatch: 600, price: '',
-    ingredients: [{ materialId: haskap, amount: 150 }, { materialId: sugar, amount: 75 }],
+    ingredients: [{ materialId: haskap, amount: 4.5 }, { materialId: sugar, amount: 2.25 }],
+    amountsPerBatch: true,
     packaging: [{ packagingId: jar, count: 1 }, { packagingId: label, count: 1 }],
   });
   save();
