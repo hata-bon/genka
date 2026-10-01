@@ -533,11 +533,15 @@ function editProduct(id) {
 
   const ingLine = (l = {}) => {
     const m = data.materials.find(x => x.id === l.materialId);
-    return `<div class="line-item ing">
-      <select>${ingredientOptions(l.materialId)}</select>
-      <input type="number" inputmode="decimal" placeholder="量" value="${esc(l.amount ?? '')}">
-      <span class="unit">${m ? esc(m.unit) : ''}</span>
-      <button type="button" class="x" aria-label="消す">×</button>
+    // 農園の商品では、時期ごとに1行ずつ入れられるよう「メモ（春・収穫後など）」を付ける
+    return `<div class="ing">
+      <div class="line-item">
+        <select>${ingredientOptions(l.materialId)}</select>
+        <input class="amt" type="number" inputmode="decimal" placeholder="量" value="${esc(l.amount ?? '')}">
+        <span class="unit">${m ? esc(m.unit) : ''}</span>
+        <button type="button" class="x" aria-label="消す">×</button>
+      </div>
+      <input class="memo" placeholder="時期のメモ（例：春・開花前・収穫後）" value="${esc(l.memo ?? '')}">
     </div>`;
   };
   const pkgLine = (l = {}) => `<div class="line-item pkg">
@@ -585,6 +589,7 @@ function editProduct(id) {
       <h2 data-l="ings">${L.ings}</h2>
       <div class="card">
         <div id="ings">${p.ingredients.map(ingLine).join('')}</div>
+        <div id="ingTotals"></div>
         ${data.materials.length
           ? `<button type="button" class="add-line" id="addIng">＋ 材料を足す</button>`
           : `<div class="hint">先に「材料」タブで材料を登録してください</div>`}
@@ -640,7 +645,8 @@ function editProduct(id) {
       wholesalePrice: f.wholesalePrice.value,
       ingredients: [...form.querySelectorAll('.ing')].map(row => ({
         materialId: row.querySelector('select').value,
-        amount: row.querySelector('input').value,
+        amount: row.querySelector('.amt').value,
+        memo: row.querySelector('.memo').value.trim(),
       })).filter(l => l.materialId),
       packaging: [...form.querySelectorAll('.pkg')].map(row => ({
         packagingId: row.querySelector('select').value,
@@ -666,13 +672,15 @@ function editProduct(id) {
       const m = data.materials.find(x => x.id === row.querySelector('select').value);
       row.querySelector('.unit').textContent = m ? m.unit : '';
     });
+    form.classList.toggle('farm-mode', cur.group === 'farm');
+    form.querySelector('#ingTotals').innerHTML = cur.group === 'farm' ? ingTotalsHtml(cur) : '';
     form.querySelector('#breakdown').innerHTML = breakdownHtml(cur);
   };
 
   form.addEventListener('input', refresh);
   form.addEventListener('change', refresh);
   form.addEventListener('click', e => {
-    if (e.target.classList.contains('x')) { e.target.closest('.line-item').remove(); refresh(); }
+    if (e.target.classList.contains('x')) { e.target.closest('.ing, .line-item').remove(); refresh(); }
   });
   const addIng = form.querySelector('#addIng');
   if (addIng) addIng.onclick = () => { form.querySelector('#ings').insertAdjacentHTML('beforeend', ingLine()); refresh(); };
@@ -705,6 +713,26 @@ function editProduct(id) {
   };
 
   refresh();
+}
+
+// 同じ肥料・農薬を時期ごとに分けて入れても、種類ごとに合計して見せる
+function ingTotalsHtml(p) {
+  const totals = new Map();
+  for (const line of p.ingredients) {
+    const m = data.materials.find(x => x.id === line.materialId);
+    if (!m) continue;
+    const t = totals.get(m.id) || { m, amount: 0, times: 0 };
+    t.amount += num(line.amount);
+    t.times += 1;
+    totals.set(m.id, t);
+  }
+  if (!totals.size) return '';
+  const rows = [...totals.values()].map(({ m, amount, times }) => {
+    const cost = num(m.qty) > 0 ? materialPrice(m) / num(m.qty) * amount : 0;
+    return `<tr><td>${esc(m.name)}${times > 1 ? `<small>${times}回</small>` : ''}</td>
+      <td>${Math.round(amount * 1000) / 1000}${esc(m.unit)}</td><td>${yen(cost)}</td></tr>`;
+  }).join('');
+  return `<div class="totals"><div class="sub">種類ごとの合計（1年間）</div><table>${rows}</table></div>`;
 }
 
 function breakdownHtml(p) {

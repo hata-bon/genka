@@ -216,3 +216,15 @@ input:focus, select:focus { outline: 2px solid var(--brand); border-color: trans
 .menu-row span:first-child { font-weight: 600; }
 .menu-row span:last-child { color: var(--muted); font-size: 13px; }
 .menu-row b:not([class]) { color: var(--text); }
+
+/* ---------- 時期ごとの肥料・農薬 ---------- */
+.ing { margin-bottom: 8px; }
+.ing .line-item { margin-bottom: 0; }
+.ing .memo { display: none; margin-top: 4px; font-size: 14px; padding: 8px 10px; background: var(--bg); border-color: transparent; }
+.farm-mode .ing { padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.farm-mode .ing .memo { display: block; }
+.totals { margin: 6px 0 8px; padding: 10px 12px; background: var(--brand-soft); border-radius: 10px; }
+.totals table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 4px; }
+.totals td { padding: 4px 0; }
+.totals td:not(:first-child) { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 8px; }
+.totals small { margin-left: 6px; font-size: 11px; color: var(--brand); }
