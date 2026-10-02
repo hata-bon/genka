@@ -1232,7 +1232,8 @@ function shareCardHtml() {
   if (!isConnected()) {
     return `
       <div class="sub" style="margin:0 0 10px">いまはこのスマホの中だけに保存されています。2人で決めた合言葉を入れると、共有のデータにつながります。</div>
-      <div class="field"><label>合言葉</label><input id="shareKey" type="password" autocomplete="off"></div>
+      <div class="field"><label>合言葉</label><input id="shareKey" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div class="hint">日本語でも入れられます（iPhoneは「パスワード」の欄だと日本語が打てないため、ふつうの欄にしています）</div></div>
       <button type="button" class="btn primary" id="connect">つなぐ</button>`;
   }
   const n = pendingCount();
