@@ -244,3 +244,6 @@ input:focus, select:focus { outline: 2px solid var(--brand); border-color: trans
 .hist-row { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .hist-row:first-child { border-top: none; padding-top: 0; }
 .hist-row .row { display: flex; justify-content: space-between; }
+
+/* ---------- 2人で共有（ステップ5） ---------- */
+.sync-badge { font-size: 13px; opacity: .9; white-space: nowrap; }

@@ -58,6 +58,7 @@ function migrateToBatchAmounts(d) {
 function save() {
   syncLinkedMaterials();
   localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  if (isConnected()) { queueChanges(); syncNow(); }
 }
 
 function newId() {
@@ -194,7 +195,11 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// 共有のデータが届いたときに描き直してよい画面（一覧の画面だけ。入力中の画面は描き直さない）
+let liveView = null;
+
 function setHeader(title, onBack) {
+  liveView = null;
   titleEl.textContent = title;
   backBtn.hidden = !onBack;
   backBtn.onclick = onBack || null;
@@ -309,6 +314,7 @@ function productCard(p, rank) {
 
 function renderProducts() {
   setHeader('商品');
+  liveView = renderProducts;
   if (data.products.length === 0) {
     main.innerHTML = `
       <div class="empty">
@@ -771,6 +777,7 @@ function breakdownHtml(p) {
 
 function renderMaterials() {
   setHeader('材料');
+  liveView = renderMaterials;
 
   const mats = data.materials.map(m => `
     <button class="card" data-mat="${m.id}">
@@ -1073,12 +1080,239 @@ function itemHistoryHtml(itemId) {
 
 function renderHistory() {
   setHeader('値段の変更履歴', () => showTab('materials'));
+  liveView = renderHistory;
   markTab('materials');
   window.scrollTo(0, 0);
   main.innerHTML = data.priceHistory.length
     ? `<div class="card">${historyRowsHtml(data.priceHistory, true)}</div>`
     : `<div class="empty">まだ変更はありません。<br>材料や包装の値段を直して保存すると、ここに記録されます。</div>`;
 }
+
+// ---------- 2人で共有（ステップ5） ----------
+// データの置き場所は Googleスプレッドシート（gas/Code.gs）。合言葉で守る。
+// 直したところだけを送り、送れなかった分はスマホが覚えておいて、あとで送り直す。
+
+const SYNC_KEY = 'genka-sync';        // { key: 合言葉, lastSync }
+const PENDING_KEY = 'genka-pending';  // まだ送れていない変更 { "materials:id": op }
+const SNAP_KEY = 'genka-snap';        // 最後に送った（受け取った）ときの中身 { "materials:id": JSON }
+const COLS = ['materials', 'packaging', 'products', 'priceHistory'];
+
+function readJson(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (e) { return fallback; }
+}
+function writeJson(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* 書けなくても動く */ }
+}
+
+let syncConf = readJson(SYNC_KEY, {});
+let syncState = '';   // '' | 'busy' | 'ok' | 'error' | 'wrong-key'
+let syncRunning = false;
+let syncAgain = false;
+
+function isConnected() { return !!(window.GENKA_SYNC_URL && syncConf.key); }
+
+// データを「種類:id → 1件」の形にばらす（設定は id が 'settings' の1件）
+function records(d) {
+  const out = {};
+  for (const col of COLS) for (const rec of d[col] || []) out[`${col}:${rec.id}`] = { col, rec };
+  out['settings:settings'] = { col: 'settings', rec: { id: 'settings', ...d.settings } };
+  return out;
+}
+
+// 前回から変わったところを「まだ送れていない変更」に足す
+function queueChanges() {
+  const cur = records(data);
+  const snap = readJson(SNAP_KEY, {});
+  const pending = readJson(PENDING_KEY, {});
+  const newSnap = {};
+  for (const [k, { col, rec }] of Object.entries(cur)) {
+    const json = JSON.stringify(rec);
+    newSnap[k] = json;
+    if (snap[k] !== json) pending[k] = { col, op: 'put', rec };
+  }
+  for (const k of Object.keys(snap)) {
+    if (!cur[k]) pending[k] = { col: k.split(':')[0], op: 'del', id: k.slice(k.indexOf(':') + 1) };
+  }
+  writeJson(SNAP_KEY, newSnap);
+  writeJson(PENDING_KEY, pending);
+}
+
+function pendingCount() { return Object.keys(readJson(PENDING_KEY, {})).length; }
+
+// スプレッドシートの表で見やすいように、商品の原価・利益率・卸値も送る
+function productViews() {
+  return data.products.map(p => {
+    const c = calcCost(p);
+    const r = profitOf(p, c);
+    return {
+      id: p.id, cost: Math.round(c.total), price: r ? r.price : '',
+      rate: r ? `${r.rate.toFixed(1)}%` : '', wholesale: p.wholesale && p.group !== 'cafe' ? wholesalePrice(p) : '',
+    };
+  });
+}
+
+async function callServer(body) {
+  const res = await fetch(window.GENKA_SYNC_URL, { method: 'POST', body: JSON.stringify({ key: syncConf.key, ...body }) });
+  return res.json();
+}
+
+// 変更を送って、最新のデータを受け取る（変更がなければ受け取るだけ）
+async function syncNow() {
+  if (!isConnected()) return;
+  if (syncRunning) { syncAgain = true; return; }
+  syncRunning = true;
+  setSyncState('busy');
+  try {
+    const pending = readJson(PENDING_KEY, {});
+    const sent = Object.entries(pending);
+    const res = await callServer({ action: 'apply', ops: sent.map(([, op]) => op), productViews: sent.length ? productViews() : [] });
+    if (!res.ok) { setSyncState(res.error === 'wrong-key' ? 'wrong-key' : 'error'); return; }
+    // 送っているあいだに、さらに直したものは残しておく
+    const now = readJson(PENDING_KEY, {});
+    for (const [k, op] of sent) if (JSON.stringify(now[k]) === JSON.stringify(op)) delete now[k];
+    writeJson(PENDING_KEY, now);
+    applyServerData(res.data);
+    syncConf.lastSync = new Date().toISOString();
+    writeJson(SYNC_KEY, syncConf);
+    setSyncState(Object.keys(now).length ? 'error' : 'ok');
+  } catch (e) {
+    setSyncState('error');  // 電波が悪いときなど。変更は覚えているので、あとで送り直す
+  } finally {
+    syncRunning = false;
+    if (syncAgain) { syncAgain = false; syncNow(); }
+  }
+}
+
+// 受け取ったデータに、まだ送れていない自分の変更を重ねて、画面に反映する
+function applyServerData(server, force) {
+  const d = {
+    settings: { ...DEFAULT_SETTINGS },
+    materials: server.materials || [], packaging: server.packaging || [],
+    products: server.products || [], priceHistory: server.priceHistory || [],
+  };
+  const st = (server.settings || [])[0];
+  if (st) { const { id, ...rest } = st; d.settings = { ...DEFAULT_SETTINGS, ...rest }; }
+
+  for (const op of Object.values(readJson(PENDING_KEY, {}))) {
+    if (op.col === 'settings') { if (op.op === 'put') { const { id, ...rest } = op.rec; d.settings = rest; } continue; }
+    const list = d[op.col];
+    const id = op.op === 'put' ? op.rec.id : op.id;
+    const i = list.findIndex(x => x.id === id);
+    if (op.op === 'del') { if (i >= 0) list.splice(i, 1); }
+    else if (i >= 0) list[i] = op.rec; else list.push(op.rec);
+  }
+  migrateToBatchAmounts(d);
+
+  const snap = {};
+  for (const [k, { rec }] of Object.entries(records(d))) snap[k] = JSON.stringify(rec);
+  writeJson(SNAP_KEY, snap);
+
+  if (!force && JSON.stringify(d) === JSON.stringify(data)) return;
+  data = d;
+  localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  if (liveView) liveView();
+}
+
+function setSyncState(state) {
+  syncState = state;
+  const el = document.getElementById('syncBadge');
+  if (el) {
+    const n = pendingCount();
+    el.textContent = !isConnected() ? '' : state === 'busy' ? '⏳'
+      : state === 'wrong-key' ? '⚠️ 合言葉' : n ? `⚠️ 未送信${n}` : state === 'error' ? '⚠️' : '☁️';
+  }
+  const card = document.getElementById('shareCard');
+  if (card && !card.querySelector('input:focus')) { card.innerHTML = shareCardHtml(); wireShareCard(); }
+}
+
+function shareCardHtml() {
+  if (!window.GENKA_SYNC_URL) {
+    return `<div class="sub" style="margin:0">データはこのスマホの中だけに保存されています。（共有の準備中です）</div>`;
+  }
+  if (!isConnected()) {
+    return `
+      <div class="sub" style="margin:0 0 10px">いまはこのスマホの中だけに保存されています。2人で決めた合言葉を入れると、共有のデータにつながります。</div>
+      <div class="field"><label>合言葉</label><input id="shareKey" type="password" autocomplete="off"></div>
+      <button type="button" class="btn primary" id="connect">つなぐ</button>`;
+  }
+  const n = pendingCount();
+  const last = syncConf.lastSync ? new Date(syncConf.lastSync).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  const msg = syncState === 'wrong-key' ? '⚠️ 合言葉が違うようです。いったん「つなぐのをやめる」から入れ直してください'
+    : syncState === 'busy' ? '⏳ やりとり中…'
+    : n ? `⚠️ まだ送れていない変更が${n}件あります（電波のよいところで「最新にする」を押してください）`
+    : syncState === 'error' ? '⚠️ つながりませんでした。電波のよいところで「最新にする」を押してください'
+    : '☁️ 共有のデータとそろっています';
+  return `
+    <div class="sub" style="margin:0">${msg}</div>
+    <div class="sub">最後にそろえた時間：${last}</div>
+    <button type="button" class="btn primary" id="syncBtn">最新にする</button>
+    <button type="button" class="btn danger" id="disconnect">このスマホでつなぐのをやめる</button>`;
+}
+
+function wireShareCard() {
+  const card = document.getElementById('shareCard');
+  if (!card) return;
+  const c = card.querySelector('#connect');
+  if (c) c.onclick = () => connect(card.querySelector('#shareKey').value.trim());
+  const b = card.querySelector('#syncBtn');
+  if (b) b.onclick = () => syncNow();
+  const d = card.querySelector('#disconnect');
+  if (d) d.onclick = () => {
+    if (!confirm('このスマホでの共有をやめますか？（共有のデータは消えません。このスマホのデータもそのまま残ります）')) return;
+    syncConf = {};
+    writeJson(SYNC_KEY, syncConf);
+    localStorage.removeItem(PENDING_KEY);
+    localStorage.removeItem(SNAP_KEY);
+    setSyncState('');
+  };
+}
+
+// はじめてつなぐ：共有のデータが空なら、このスマホのデータを送る。データがあれば、それを受け取る
+async function connect(key) {
+  if (!key) { toast('合言葉を入れてください'); return; }
+  const btn = document.getElementById('connect');
+  if (btn) { btn.disabled = true; btn.textContent = 'つないでいます…'; }
+  try {
+    syncConf = { key };
+    const res = await callServer({ action: 'load' });
+    if (!res.ok) {
+      syncConf = {};
+      toast(res.error === 'wrong-key' ? '合言葉が違います' : 'つながりませんでした');
+      return;
+    }
+    const server = res.data;
+    const serverEmpty = COLS.every(c => !(server[c] || []).length);
+    const localHas = data.products.length || data.materials.length;
+    if (!serverEmpty && localHas &&
+        !confirm('共有のデータがすでにあります。このスマホのデータは共有のデータに置きかわります（このスマホだけにある分は消えます）。つなぎますか？')) {
+      syncConf = {};
+      return;
+    }
+    writeJson(SYNC_KEY, syncConf);
+    localStorage.removeItem(PENDING_KEY);
+    localStorage.removeItem(SNAP_KEY);
+    if (serverEmpty) {
+      queueChanges();  // スナップショットが空なので、このスマホの全部が「送る変更」になる
+      await syncNow();
+      toast('このスマホのデータを共有しました');
+    } else {
+      applyServerData(server, true);
+      syncConf.lastSync = new Date().toISOString();
+      writeJson(SYNC_KEY, syncConf);
+      setSyncState('ok');
+      toast('共有のデータを受け取りました');
+    }
+  } catch (e) {
+    syncConf = {};
+    toast('つながりませんでした');
+  } finally {
+    setSyncState(syncState);
+  }
+}
+
+// アプリを開いたとき・スマホで画面に戻ってきたときに、最新にする
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+window.addEventListener('online', () => syncNow());
 
 // ---------- 設定 ----------
 
@@ -1100,12 +1334,14 @@ function renderSettings() {
       <div class="field">
         <label>卸値の上乗せ率</label>
         <div class="inline"><input name="wholesaleMarkup" type="number" inputmode="decimal" value="${esc(s.wholesaleMarkup)}"><span class="unit">%</span></div>
-        <div class="hint">農園→カフェの卸値に使います（ステップ3で使えるようになります）</div>
+        <div class="hint">農園→カフェの卸値に使います（空欄の卸値は「原価＋この%」）</div>
       </div>
       <button type="submit" class="btn primary">保存する</button>
     </form>
-    <div class="empty" style="font-size:13px">データはこのスマホの中に保存されています。<br>（かえさんとの共有はステップ5で行います）</div>`;
+    <h2>2人で共有</h2>
+    <div class="card" id="shareCard">${shareCardHtml()}</div>`;
 
+  wireShareCard();
   const form = main.querySelector('#sform');
   form.addEventListener('submit', e => {
     e.preventDefault();
@@ -1184,3 +1420,5 @@ function addFarmCafeSample() {
 }
 
 showTab('products');
+setSyncState('');
+syncNow();
