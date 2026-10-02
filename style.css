@@ -228,3 +228,19 @@ input:focus, select:focus { outline: 2px solid var(--brand); border-color: trans
 .totals td { padding: 4px 0; }
 .totals td:not(:first-child) { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 8px; }
 .totals small { margin-left: 6px; font-size: 11px; color: var(--brand); }
+
+/* ---------- 値上がりチェックと変更履歴（ステップ4） ---------- */
+.try { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.try button {
+  border: 1px solid var(--line); background: #fff; border-radius: 99px;
+  padding: 6px 11px; font-size: 13px; color: var(--text);
+}
+.impact { background: #fff7ec; border: 1px solid #f3d3a6; border-radius: 12px; padding: 12px; margin-bottom: 4px; }
+.impact-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.impact-row { padding: 8px 0; border-top: 1px solid #f3dfc3; }
+.impact-row:first-of-type { border-top: none; }
+.impact-row .row { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.impact-row .row.sub { font-size: 12px; margin-top: 2px; }
+.hist-row { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.hist-row:first-child { border-top: none; padding-top: 0; }
+.hist-row .row { display: flex; justify-content: space-between; }

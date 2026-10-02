@@ -33,11 +33,12 @@ function load() {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY));
     if (saved) {
       saved.settings = { ...DEFAULT_SETTINGS, ...saved.settings };
+      saved.priceHistory = saved.priceHistory || [];
       migrateToBatchAmounts(saved);
       return saved;
     }
   } catch (e) { /* 読めなければ空から始める */ }
-  return { settings: { ...DEFAULT_SETTINGS }, materials: [], packaging: [], products: [] };
+  return { settings: { ...DEFAULT_SETTINGS }, materials: [], packaging: [], products: [], priceHistory: [] };
 }
 
 // 以前の「1つあたりの量（g・ml・個）」を「1回の仕込みで使う量（仕入れと同じ単位）」に置きかえる
@@ -779,7 +780,7 @@ function renderMaterials() {
       </div>
       <div class="sub">${m.linkedProductId
         ? `🔗 農園の卸値と連動：1${esc(m.unit === '個' ? (data.products.find(x => x.id === m.linkedProductId)?.unitLabel || '個') : m.unit)} ${yen(materialPrice(m))}`
-        : `仕入れ：${num(m.qty)}${esc(m.unit)} ${yen(num(m.price))}${m.supplier ? '・' + esc(m.supplier) : ''}・${esc(m.updatedAt)}更新`}</div>
+        : `仕入れ：${num(m.qty)}${esc(m.unit)} ${yen(num(m.price))}${m.supplier ? '・' + esc(m.supplier) : ''}・${esc(m.updatedAt)}更新${lastChangeHtml(m.id)}`}</div>
     </button>`).join('');
 
   const pkgs = data.packaging.map(x => `
@@ -788,6 +789,7 @@ function renderMaterials() {
         <div class="name">${esc(x.name)}</div>
         <div class="big">${yen(num(x.price))}</div>
       </div>
+      ${lastChangeHtml(x.id) ? `<div class="sub">${lastChangeHtml(x.id).slice(1)}</div>` : ''}
     </button>`).join('');
 
   main.innerHTML = `
@@ -796,7 +798,10 @@ function renderMaterials() {
     <button class="btn ghost" id="addMat">＋ 材料を追加</button>
     <h2>包装・資材・送料（1つあたりの値段）</h2>
     ${pkgs || '<div class="empty">まだ包装・資材がありません</div>'}
-    <button class="btn ghost" id="addPkg">＋ 包装・資材を追加</button>`;
+    <button class="btn ghost" id="addPkg">＋ 包装・資材を追加</button>
+    <h2>記録</h2>
+    <button class="btn ghost" id="hist">📋 値段の変更履歴（${data.priceHistory.length}件）</button>`;
+  main.querySelector('#hist').onclick = renderHistory;
 
   main.querySelectorAll('[data-mat]').forEach(el => el.onclick = () => editMaterial(el.dataset.mat));
   main.querySelectorAll('[data-pkg]').forEach(el => el.onclick = () => editPackaging(el.dataset.pkg));
@@ -827,6 +832,7 @@ function editMaterial(id) {
   const m = existing ? { ...existing } : { id: newId(), name: '', use: 'farm', qty: 1, unit: 'kg', price: '', supplier: '' };
 
   setHeader(existing ? '材料を直す' : '材料を追加', () => showTab('materials'));
+  markTab('materials');
   window.scrollTo(0, 0);
 
   main.innerHTML = `
@@ -850,14 +856,17 @@ function editMaterial(id) {
         <label>仕入れ値（税込）</label>
         <div class="inline"><input name="price" type="number" inputmode="decimal" value="${esc(m.price)}" placeholder="300"><span class="unit">円</span></div>
         <div class="preview" id="mprev"></div>
+        ${existing ? tryButtonsHtml() : ''}
       </div>
       <div class="field">
         <label>仕入れ先（なくてもOK）</label>
         <input name="supplier" value="${esc(m.supplier)}" placeholder="例：〇〇商店">
       </div>
+      <div id="impact"></div>
       <button type="submit" class="btn primary">保存する</button>
       ${existing ? `<button type="button" class="btn danger" id="del">この材料を消す</button>` : ''}
-    </form>`;
+    </form>
+    ${existing ? itemHistoryHtml(m.id) : ''}`;
 
   const form = main.querySelector('#mform');
   wireSeg(form);
@@ -873,9 +882,11 @@ function editMaterial(id) {
   const refresh = () => {
     const cur = read();
     form.querySelector('#mprev').textContent = `→ 1${baseUnit(cur)}あたり ${yenFine(unitPrice(cur))}`;
+    if (existing) form.querySelector('#impact').innerHTML = impactHtml(impactOf('materials', existing, cur), priceChanged(existing, cur));
   };
   form.addEventListener('input', refresh);
   form.addEventListener('change', refresh);
+  if (existing) wireTryButtons(form, num(existing.price), refresh);
   refresh();
 
   form.addEventListener('submit', e => {
@@ -883,7 +894,8 @@ function editMaterial(id) {
     const cur = read();
     if (!cur.name) { toast('材料の名前を入れてください'); return; }
     if (num(cur.qty) <= 0) { toast('仕入れの量を入れてください'); return; }
-    cur.updatedAt = today();
+    if (!existing || priceChanged(existing, cur)) cur.updatedAt = today();
+    if (existing && priceChanged(existing, cur)) addHistory('material', existing, cur);
     const i = data.materials.findIndex(x => x.id === cur.id);
     if (i >= 0) data.materials[i] = cur; else data.materials.push(cur);
     save();
@@ -907,6 +919,7 @@ function editPackaging(id) {
   const x = existing ? { ...existing } : { id: newId(), name: '', price: '' };
 
   setHeader(existing ? '包装・資材を直す' : '包装・資材を追加', () => showTab('materials'));
+  markTab('materials');
   window.scrollTo(0, 0);
 
   main.innerHTML = `
@@ -918,16 +931,29 @@ function editPackaging(id) {
       <div class="field">
         <label>1つあたりの値段（税込）</label>
         <div class="inline"><input name="price" type="number" inputmode="decimal" value="${esc(x.price)}" placeholder="120"><span class="unit">円</span></div>
+        ${existing ? tryButtonsHtml() : ''}
       </div>
+      <div id="impact"></div>
       <button type="submit" class="btn primary">保存する</button>
       ${existing ? `<button type="button" class="btn danger" id="del">これを消す</button>` : ''}
-    </form>`;
+    </form>
+    ${existing ? itemHistoryHtml(x.id) : ''}`;
 
   const form = main.querySelector('#kform');
+  const readPkg = () => ({ ...x, name: form.elements.name.value.trim(), price: form.elements.price.value });
+  if (existing) {
+    const refresh = () => {
+      const cur = readPkg();
+      form.querySelector('#impact').innerHTML = impactHtml(impactOf('packaging', existing, cur), priceChanged(existing, cur));
+    };
+    form.addEventListener('input', refresh);
+    wireTryButtons(form, num(existing.price), refresh);
+  }
   form.addEventListener('submit', e => {
     e.preventDefault();
-    const cur = { ...x, name: form.elements.name.value.trim(), price: form.elements.price.value };
+    const cur = readPkg();
     if (!cur.name) { toast('名前を入れてください'); return; }
+    if (existing && priceChanged(existing, cur)) addHistory('packaging', existing, cur);
     const i = data.packaging.findIndex(k => k.id === cur.id);
     if (i >= 0) data.packaging[i] = cur; else data.packaging.push(cur);
     save();
@@ -944,6 +970,114 @@ function editPackaging(id) {
     save();
     showTab('materials');
   };
+}
+
+// ---------- 値上がりチェックと変更履歴（ステップ4） ----------
+
+// 値段（仕入れの量・単位も含む）が変わったか
+function priceChanged(before, after) {
+  return num(before.price) !== num(after.price) || num(before.qty) !== num(after.qty) || (before.unit || '') !== (after.unit || '');
+}
+
+// 「もし値段がこうなったら」：材料（包装）を一時的に入れかえて、全商品の原価を計算し直してくらべる
+// 肥料 → 農園の果実の原価 → カフェへの卸値 → カフェのメニュー のような、間接的な影響も入る
+function impactOf(listName, before, after) {
+  const list = data[listName];
+  const i = list.findIndex(x => x.id === before.id);
+  if (i < 0) return [];
+  const costsBefore = data.products.map(p => calcCost(p).total);
+  list[i] = after;
+  let costsAfter;
+  try { costsAfter = data.products.map(p => calcCost(p).total); } finally { list[i] = before; }
+  return data.products
+    .map((p, k) => ({ p, before: costsBefore[k], after: costsAfter[k] }))
+    .filter(r => Math.abs(r.after - r.before) >= 0.005);
+}
+
+function impactHtml(rows, changed) {
+  if (!changed) return '';
+  if (!rows.length) return `<div class="impact"><div class="sub">この値段を使っている商品はまだありません</div></div>`;
+  return `<div class="impact">
+    <div class="impact-title">⚠️ この値段にすると…（まだ保存していません）</div>
+    ${rows.map(({ p, before, after }) => {
+      const diff = Math.round(after) - Math.round(before);  // 表示している金額どうしの差にそろえる
+      const price = num(p.price);
+      const rateB = price > 0 ? (price - before) / price * 100 : null;
+      const rateA = price > 0 ? (price - after) / price * 100 : null;
+      return `<div class="impact-row">
+        <div class="row"><b>${esc(p.name)}</b><span class="${diff > 0 ? 'minus' : 'plus'}">${diff > 0 ? '+' : ''}${yen(diff)}（${diff > 0 ? '+' : ''}${(diff / before * 100).toFixed(1)}%）</span></div>
+        <div class="row sub"><span>原価 ${yen(before)} → <b>${yen(after)}</b></span>
+          <span>${rateA !== null ? `利益率 ${rateB.toFixed(0)}% → <b class="${profitClass(price - after, rateA)}">${rateA.toFixed(0)}%</b>` : '売値 未定'}</span></div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// 「＋5%」などのボタンで、仕入れ値をためしに上げてみる
+function tryButtonsHtml() {
+  return `<div class="try">ためしに：
+    <button type="button" data-pct="5">＋5%</button><button type="button" data-pct="10">＋10%</button>
+    <button type="button" data-pct="20">＋20%</button><button type="button" data-pct="0">元に戻す</button></div>`;
+}
+function wireTryButtons(form, basePrice, refresh) {
+  form.querySelectorAll('.try button').forEach(b => b.onclick = () => {
+    form.elements.price.value = Math.round(basePrice * (1 + num(b.dataset.pct) / 100));
+    refresh();
+  });
+}
+
+function addHistory(kind, before, after) {
+  data.priceHistory.push({
+    id: newId(), kind, itemId: before.id, name: after.name, date: today(),
+    oldPrice: num(before.price), newPrice: num(after.price),
+    oldQty: before.qty ?? 1, newQty: after.qty ?? 1, oldUnit: before.unit || '個', newUnit: after.unit || '個',
+  });
+}
+
+// 1g（1個）あたりで、何%変わったか
+function historyRate(h) {
+  const per = (price, qty, unit) => { const a = num(qty) * (UNITS[unit] || UNITS['個']).factor; return a > 0 ? num(price) / a : 0; };
+  const o = per(h.oldPrice, h.oldQty, h.oldUnit), n = per(h.newPrice, h.newQty, h.newUnit);
+  return o > 0 ? (n - o) / o * 100 : 0;
+}
+function historyText(h, side) {
+  const price = yen(side === 'old' ? h.oldPrice : h.newPrice);
+  if (h.kind === 'packaging') return `1つ ${price}`;
+  return side === 'old' ? `${num(h.oldQty)}${esc(h.oldUnit)} ${price}` : `${num(h.newQty)}${esc(h.newUnit)} ${price}`;
+}
+function rateBadge(h) {
+  const r = historyRate(h);
+  if (Math.abs(r) < 0.05) return '';
+  return `<span class="${r > 0 ? 'minus' : 'plus'}">${r > 0 ? '▲' : '▼'}${Math.abs(r).toFixed(1)}%</span>`;
+}
+
+// 一覧に出す「前回から▲10%」
+function lastChangeHtml(itemId) {
+  const h = [...data.priceHistory].reverse().find(x => x.itemId === itemId);
+  return h && rateBadge(h) ? `・前回から${rateBadge(h)}` : '';
+}
+
+function historyRowsHtml(list, showName) {
+  return list.slice().reverse().map(h => `
+    <div class="hist-row">
+      <div class="row"><span class="sub" style="margin:0">${esc(h.date)}</span>${rateBadge(h)}</div>
+      ${showName ? `<div class="name" style="font-size:15px">${esc(h.name)}</div>` : ''}
+      <div>${historyText(h, 'old')} → <b>${historyText(h, 'new')}</b></div>
+    </div>`).join('');
+}
+
+function itemHistoryHtml(itemId) {
+  const list = data.priceHistory.filter(h => h.itemId === itemId);
+  return `<h2>値段の変更履歴</h2><div class="card">${list.length ? historyRowsHtml(list, false) : '<div class="sub" style="margin:0">まだ変更はありません</div>'}</div>`;
+}
+
+function renderHistory() {
+  setHeader('値段の変更履歴', () => showTab('materials'));
+  markTab('materials');
+  window.scrollTo(0, 0);
+  main.innerHTML = data.priceHistory.length
+    ? `<div class="card">${historyRowsHtml(data.priceHistory, true)}</div>`
+    : `<div class="empty">まだ変更はありません。<br>材料や包装の値段を直して保存すると、ここに記録されます。</div>`;
 }
 
 // ---------- 設定 ----------
