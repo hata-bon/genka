@@ -803,6 +803,7 @@ function renderMaterials() {
     <h2>材料（1gあたりなどの単価を自動計算）</h2>
     ${mats || '<div class="empty">まだ材料がありません</div>'}
     <button class="btn ghost" id="addMat">＋ 材料を追加</button>
+    <button class="btn ghost" id="pasteBean">📋 焙煎豆を貼り付け（焙煎記録アプリから）</button>
     <h2>包装・資材・送料（1つあたりの値段）</h2>
     ${pkgs || '<div class="empty">まだ包装・資材がありません</div>'}
     <button class="btn ghost" id="addPkg">＋ 包装・資材を追加</button>
@@ -813,6 +814,7 @@ function renderMaterials() {
   main.querySelectorAll('[data-mat]').forEach(el => el.onclick = () => editMaterial(el.dataset.mat));
   main.querySelectorAll('[data-pkg]').forEach(el => el.onclick = () => editPackaging(el.dataset.pkg));
   main.querySelector('#addMat').onclick = () => editMaterial(null);
+  main.querySelector('#pasteBean').onclick = pasteRoastedBean;
   main.querySelector('#addPkg').onclick = () => editPackaging(null);
 }
 
@@ -821,7 +823,42 @@ function usedBy(field, id) {
   return data.products.filter(p => (p[field] || []).some(l => l.materialId === id || l.packagingId === id)).map(p => p.name);
 }
 
-function editMaterial(id) {
+// 焙煎記録アプリの「原価計算アプリ用にコピー」の内容を読み取る。
+// 同じ名前の材料があれば値段を置きかえる画面、なければ新しい材料の画面を、値を入れた状態で開く
+function parseRoastedBean(text) {
+  const t = String(text || '').replace(/\r/g, '');
+  const pick = label => t.match(new RegExp(`${label}[：:]\\s*(.+?)\\s*(?=\\n|材料の名前|どちらで使う|仕入れの量|仕入れ値|仕入れ先|$)`))?.[1]?.trim();
+  const name = pick('材料の名前');
+  const qty = pick('仕入れの量')?.match(/([\d.]+)\s*(kg|g|L|ml|個)/);
+  const price = pick('仕入れ値（税込）')?.match(/[\d,]+/)?.[0].replace(/,/g, '');
+  if (!name || !qty || !price) return null;
+  return {
+    name,
+    use: /カフェ/.test(pick('どちらで使う') || '') ? 'cafe' : 'farm',
+    qty: qty[1],
+    unit: qty[2],
+    price,
+    supplier: pick('仕入れ先') || '',
+  };
+}
+
+async function pasteRoastedBean() {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); } catch (e) { /* 読めなければ手で貼ってもらう */ }
+  let bean = parseRoastedBean(text);
+  if (!bean) {
+    text = prompt('焙煎記録アプリでコピーした内容を、ここに貼り付けてください') || '';
+    bean = parseRoastedBean(text);
+  }
+  if (!bean) {
+    if (text) toast('焙煎豆の内容が読み取れませんでした');
+    return;
+  }
+  const same = data.materials.find(m => m.name === bean.name && !m.linkedProductId);
+  editMaterial(same ? same.id : null, bean);
+}
+
+function editMaterial(id, prefill) {
   const existing = data.materials.find(m => m.id === id);
   if (existing && existing.linkedProductId) {
     const p = data.products.find(x => x.id === existing.linkedProductId);
@@ -836,13 +873,15 @@ function editMaterial(id) {
     main.querySelector('#go').onclick = () => simulate(p.id);
     return;
   }
-  const m = existing ? { ...existing } : { id: newId(), name: '', use: 'farm', qty: 1, unit: 'kg', price: '', supplier: '' };
+  const base = existing ? { ...existing } : { id: newId(), name: '', use: 'farm', qty: 1, unit: 'kg', price: '', supplier: '' };
+  const m = prefill ? { ...base, ...prefill } : base;
 
   setHeader(existing ? '材料を直す' : '材料を追加', () => showTab('materials'));
   markTab('materials');
   window.scrollTo(0, 0);
 
   main.innerHTML = `
+    ${prefill ? `<div class="preview" style="margin-bottom:10px">☕ 焙煎記録アプリから貼り付けました。${existing ? '登録ずみの焙煎豆の値段を、新しい原価に置きかえます。下の影響を確かめて' : '内容を確かめて'}「保存する」を押してください</div>` : ''}
     <form id="mform" class="card" autocomplete="off">
       <div class="field">
         <label>材料の名前</label>
