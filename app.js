@@ -432,7 +432,7 @@ function simulate(id) {
     <h2>売値を動かしてみる</h2>
     <div class="card sim">
       <div class="inline price-in">
-        <input id="priceIn" type="number" inputmode="numeric" value="${start}">
+        <input id="priceIn" type="number" step="any" inputmode="numeric" value="${start}">
         <span class="unit">円（税込）</span>
       </div>
       <input id="slider" type="range" min="${min}" max="${max}" step="10" value="${Math.min(Math.max(start, min), max)}">
@@ -544,7 +544,7 @@ function editProduct(id) {
     return `<div class="ing">
       <div class="line-item">
         <select>${ingredientOptions(l.materialId)}</select>
-        <input class="amt" type="number" inputmode="decimal" placeholder="量" value="${esc(l.amount ?? '')}">
+        <input class="amt" type="number" step="any" inputmode="decimal" placeholder="量" value="${esc(l.amount ?? '')}">
         <span class="unit">${m ? esc(m.unit) : ''}</span>
         <button type="button" class="x" aria-label="消す">×</button>
       </div>
@@ -553,7 +553,7 @@ function editProduct(id) {
   };
   const pkgLine = (l = {}) => `<div class="line-item pkg">
       <select>${packagingOptions(l.packagingId)}</select>
-      <input type="number" inputmode="decimal" placeholder="数" value="${esc(l.count ?? 1)}">
+      <input type="number" step="any" inputmode="decimal" placeholder="数" value="${esc(l.count ?? 1)}">
       <span class="unit">個</span>
       <button type="button" class="x" aria-label="消す">×</button>
     </div>`;
@@ -580,16 +580,17 @@ function editProduct(id) {
       <div class="card">
         <div class="field">
           <label data-l="batch">${L.batch}</label>
-          <div class="inline"><input name="batchCount" type="number" inputmode="decimal" value="${esc(p.batchCount)}" placeholder="50"><span class="unit unitLabel">${esc(p.unitLabel)}</span></div>
+          <div class="inline"><input name="batchCount" type="number" step="any" inputmode="decimal" value="${esc(p.batchCount)}" placeholder="50"><span class="unit unitLabel">${esc(p.unitLabel)}</span></div>
           <div class="hint" data-l="batchHint">${L.batchHint}</div>
         </div>
         <div class="field">
           <label data-l="labor">${L.labor}</label>
-          <div class="inline"><input name="laborHours" type="number" inputmode="decimal" step="0.25" value="${esc(p.laborHours)}" placeholder="3"><span class="unit">時間</span></div>
+          <div class="inline"><input name="laborHours" type="number" step="any" inputmode="decimal" value="${esc(p.laborHours)}" placeholder="3"><span class="unit">時間</span></div>
+          <div class="hint">1時間より短いときは小数で：3分＝0.05、5分＝0.08、15分＝0.25、30分＝0.5</div>
         </div>
         <div class="field">
           <label data-l="utility">${L.utility}</label>
-          <div class="inline"><input name="utilityPerBatch" type="number" inputmode="decimal" value="${esc(p.utilityPerBatch)}" placeholder="600"><span class="unit">円</span></div>
+          <div class="inline"><input name="utilityPerBatch" type="number" step="any" inputmode="decimal" value="${esc(p.utilityPerBatch)}" placeholder="600"><span class="unit">円</span></div>
         </div>
       </div>
 
@@ -612,7 +613,7 @@ function editProduct(id) {
 
       <h2>売値（決まっていれば）</h2>
       <div class="card">
-        <div class="inline"><input name="price" type="number" inputmode="decimal" value="${esc(p.price)}" placeholder="未定なら空のまま"><span class="unit">円（税込）</span></div>
+        <div class="inline"><input name="price" type="number" step="any" inputmode="decimal" value="${esc(p.price)}" placeholder="未定なら空のまま"><span class="unit">円（税込）</span></div>
       </div>
 
       <div id="wsBlock">
@@ -621,7 +622,7 @@ function editProduct(id) {
           ${segHtml('wholesale', { no: '卸さない', yes: '卸す' }, p.wholesale ? 'yes' : 'no')}
           <div id="wsFields" class="field" style="margin:14px 0 0">
             <label>卸値（1<span class="unitLabel">${esc(p.unitLabel)}</span>あたり・税込）</label>
-            <div class="inline"><input name="wholesalePrice" type="number" inputmode="decimal" value="${esc(p.wholesalePrice)}" placeholder="自動"><span class="unit">円</span></div>
+            <div class="inline"><input name="wholesalePrice" type="number" step="any" inputmode="decimal" value="${esc(p.wholesalePrice)}" placeholder="自動"><span class="unit">円</span></div>
             <div class="hint" id="wsHint"></div>
           </div>
         </div>
@@ -894,13 +895,13 @@ function editMaterial(id, prefill) {
       <div class="field">
         <label>仕入れの量</label>
         <div class="inline">
-          <input name="qty" type="number" inputmode="decimal" value="${esc(m.qty)}">
+          <input name="qty" type="number" step="any" inputmode="decimal" value="${esc(m.qty)}">
           <select name="unit">${Object.keys(UNITS).map(u => `<option ${u === m.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
         </div>
       </div>
       <div class="field">
         <label>仕入れ値（税込）</label>
-        <div class="inline"><input name="price" type="number" inputmode="decimal" value="${esc(m.price)}" placeholder="300"><span class="unit">円</span></div>
+        <div class="inline"><input name="price" type="number" step="any" inputmode="decimal" value="${esc(m.price)}" placeholder="300"><span class="unit">円</span></div>
         <div class="preview" id="mprev"></div>
         ${existing ? tryButtonsHtml() : ''}
       </div>
@@ -976,7 +977,7 @@ function editPackaging(id) {
       </div>
       <div class="field">
         <label>1つあたりの値段（税込）</label>
-        <div class="inline"><input name="price" type="number" inputmode="decimal" value="${esc(x.price)}" placeholder="120"><span class="unit">円</span></div>
+        <div class="inline"><input name="price" type="number" step="any" inputmode="decimal" value="${esc(x.price)}" placeholder="120"><span class="unit">円</span></div>
         ${existing ? tryButtonsHtml() : ''}
       </div>
       <div id="impact"></div>
@@ -1363,17 +1364,17 @@ function renderSettings() {
     <form id="sform" class="card" autocomplete="off">
       <div class="field">
         <label>時給</label>
-        <div class="inline"><input name="hourlyWage" type="number" inputmode="decimal" value="${esc(s.hourlyWage)}"><span class="unit">円</span></div>
+        <div class="inline"><input name="hourlyWage" type="number" step="any" inputmode="decimal" value="${esc(s.hourlyWage)}"><span class="unit">円</span></div>
         <div class="hint">作業時間の費用の計算に使います</div>
       </div>
       <div class="field">
         <label>目標の利益率</label>
-        <div class="inline"><input name="targetMargin" type="number" inputmode="decimal" value="${esc(s.targetMargin)}"><span class="unit">%</span></div>
+        <div class="inline"><input name="targetMargin" type="number" step="any" inputmode="decimal" value="${esc(s.targetMargin)}"><span class="unit">%</span></div>
         <div class="hint">売値の目安 ＝ 原価 ÷（1 − 利益率）。10円単位に切り上げます</div>
       </div>
       <div class="field">
         <label>卸値の上乗せ率</label>
-        <div class="inline"><input name="wholesaleMarkup" type="number" inputmode="decimal" value="${esc(s.wholesaleMarkup)}"><span class="unit">%</span></div>
+        <div class="inline"><input name="wholesaleMarkup" type="number" step="any" inputmode="decimal" value="${esc(s.wholesaleMarkup)}"><span class="unit">%</span></div>
         <div class="hint">農園→カフェの卸値に使います（空欄の卸値は「原価＋この%」）</div>
       </div>
       <button type="submit" class="btn primary">保存する</button>
