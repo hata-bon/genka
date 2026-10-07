@@ -1459,6 +1459,30 @@ function addFarmCafeSample() {
   renderProducts();
 }
 
+// ---------- 新しい版の確認 ----------
+// ホーム画面から開いたアプリは古い画面を覚えていることがあるので、公開中の index.html の版の印（?v=…）と比べて、
+// 新しければ切り替える。入力の途中の画面では切り替えない。送れていない変更はスマホが覚えているので消えない
+
+function myVersion() {
+  return document.querySelector('script[src*="app.js"]')?.src.match(/v=([^&]+)/)?.[1] || '';
+}
+
+async function checkUpdate() {
+  if (main.querySelector('form')) return;
+  try {
+    const res = await fetch(`./index.html?check=${Date.now()}`, { cache: 'no-store' });
+    const latest = (await res.text()).match(/app\.js\?v=([^"&]+)/)?.[1];
+    if (!latest || latest === myVersion()) return;
+    // 同じ版へ何度も切り替えようとしないように
+    if (sessionStorage.getItem('genka-tried') === latest) return;
+    sessionStorage.setItem('genka-tried', latest);
+    location.replace(`${location.pathname}?v=${latest}`);
+  } catch (e) { /* 電波がないときなどは今の版のまま使う */ }
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+
 showTab('products');
 setSyncState('');
 syncNow();
+checkUpdate();
